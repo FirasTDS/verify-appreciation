@@ -243,7 +243,7 @@ EwIDAQAB
             return bytes.buffer;
         }
 
-        async function verifySignature(publicKeyPem, dataStr, signatureB64) {
+        async function verifySignature(publicKeyPem, dataBuffer, signatureB64) {
             try {
                 const keyBuffer = pemToArrayBuffer(publicKeyPem);
                 const publicKey = await window.crypto.subtle.importKey(
@@ -256,9 +256,6 @@ EwIDAQAB
                     true,
                     ["verify"]
                 );
-
-                const encoder = new TextEncoder();
-                const dataBuffer = encoder.encode(dataStr);
 
                 let b64 = signatureB64.replace(/-/g, '+').replace(/_/g, '/');
                 while (b64.length % 4) {
@@ -299,19 +296,27 @@ EwIDAQAB
                 while (b64Url.length % 4) {
                     b64Url += '=';
                 }
-                const decodedJson = decodeURIComponent(escape(window.atob(b64Url)));
+                const binaryStr = window.atob(b64Url);
+                const compressedBytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    compressedBytes[i] = binaryStr.charCodeAt(i);
+                }
                 
-                const isValid = await verifySignature(PUBLIC_KEY_PEM, decodedJson, sig);
+                const isValid = await verifySignature(PUBLIC_KEY_PEM, compressedBytes, sig);
 
                 if (isValid) {
-                    const payload = JSON.parse(decodedJson);
+                    // Decompress native zlib stream
+                    const stream = new Response(compressedBytes).body.pipeThrough(new DecompressionStream('deflate'));
+                    const decompressedText = await new Response(stream).text();
+                    
+                    const payload = JSON.parse(decompressedText);
                     showSuccess(payload);
                 } else {
                     showFailure("فشل التحقق الرقمي", "التوقيع المرفق بالرابط غير مطابق للبيانات، قد تكون البيانات تم تعديلها.");
                 }
             } catch (e) {
-                console.error("Parsing failed", e);
-                showFailure("خطأ في قراءة البيانات", "صيغة معلمات التحقق غير صالحة.");
+                console.error("Parsing or decompression failed", e);
+                showFailure("خطأ في قراءة البيانات", "فشل فك ضغط أو قراءة معلمات التحقق.");
             }
         }
 
